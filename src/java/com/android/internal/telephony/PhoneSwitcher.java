@@ -169,7 +169,7 @@ public class PhoneSwitcher extends Handler {
                     EVENT_NETWORK_VALIDATION_DONE, subId, validated ? 1 : 0).sendToTarget();
     @UnsupportedAppUsage
     protected int mMaxActivePhones;
-    protected static PhoneSwitcher sPhoneSwitcher = null;
+    private static PhoneSwitcher sPhoneSwitcher = null;
 
     // Which primary (non-opportunistic) subscription is set as data subscription among all primary
     // subscriptions. This value usually comes from user setting, and it's the subscription used for
@@ -622,6 +622,19 @@ public class PhoneSwitcher extends Handler {
         }
     }
 
+    protected boolean isEmergency() {
+        if (isInEmergencyCallbackMode()) return true;
+        for (Phone p : mPhones) {
+            if (p == null) continue;
+            if (p.isInEmergencyCall()) return true;
+            Phone imsPhone = p.getImsPhone();
+            if (imsPhone != null && imsPhone.isInEmergencyCall()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isInEmergencyCallbackMode() {
         for (Phone p : mPhones) {
             if (p == null) continue;
@@ -959,8 +972,7 @@ public class PhoneSwitcher extends Handler {
     }
 
     protected int phoneIdForRequest(NetworkRequest netRequest) {
-        int subId = getSubIdFromNetworkSpecifier(netRequest.networkCapabilities
-                .getNetworkSpecifier());
+        int subId = getSubIdFromNetworkRequest(netRequest);
 
         if (subId == DEFAULT_SUBSCRIPTION_ID) return mPreferredDataPhoneId;
         if (subId == INVALID_SUBSCRIPTION_ID) return INVALID_PHONE_INDEX;
