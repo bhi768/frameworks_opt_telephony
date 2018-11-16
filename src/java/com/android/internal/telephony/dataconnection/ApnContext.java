@@ -442,11 +442,13 @@ public class ApnContext {
         }
     }
 
-    /**
-     * @param excludeDun True if excluding requests that have DUN capability
-     * @return True if the attached network requests contain restricted capability.
-     */
-    public boolean hasRestrictedRequests(boolean excludeDun) {
+    public List<NetworkRequest> getNetworkRequests() {
+        synchronized (mRefCountLock) {
+            return new ArrayList<NetworkRequest>(mNetworkRequests);
+        }
+    }
+
+    public boolean hasNoRestrictedRequests(boolean excludeDun) {
         synchronized (mRefCountLock) {
             for (NetworkRequest nr : mNetworkRequests) {
                 if (excludeDun &&
@@ -454,13 +456,13 @@ public class ApnContext {
                         NetworkCapabilities.NET_CAPABILITY_DUN)) {
                     continue;
                 }
-                if (!nr.networkCapabilities.hasCapability(
-                        NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
-                    return true;
+                if (nr.networkCapabilities.hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED) == false) {
+                    return false;
                 }
             }
         }
-        return false;
+        return true;
     }
 
     private final SparseIntArray mRetriesLeftPerErrorCode = new SparseIntArray();

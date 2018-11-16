@@ -886,16 +886,47 @@ public class DcTracker extends Handler {
      *
      * For example, handle reverting restricted networks back to unrestricted. If we're changing
      * user data to enabled and this makes data truly enabled (not disabled by other factors) we
-     * need to reevaluate and possibly add NET_CAPABILITY_NOT_RESTRICTED capability to the data
-     * connection. This allows non-privilege apps to use the network.
+     * need to tear down any metered apn type that was enabled anyway by a privileged request.
+     * This allows us to reconnect to it in an unrestricted way.
      *
      * Or when we brought up a unmetered data connection while data is off, we only limit this
      * data connection for unmetered use only. When data is turned back on, we need to tear that
      * down so a full capable data connection can be re-established.
      */
     private void reevaluateDataConnections() {
-        for (DataConnection dataConnection : mDataConnections.values()) {
-            dataConnection.reevaluateRestrictedState();
+        if (mDataEnabledSettings.isDataEnabled()) {
+            for (ApnContext apnContext : mApnContexts.values()) {
+                if (apnContext.isConnectedOrConnecting()) {
+                    final DataConnection dataConnection = apnContext.getDataConnection();
+                    if (dataConnection != null) {
+                        final NetworkCapabilities netCaps = dataConnection.getNetworkCapabilities();
+                        if (netCaps != null && !netCaps.hasCapability(NetworkCapabilities
+                                .NET_CAPABILITY_NOT_RESTRICTED) && !netCaps.hasCapability(
+                                NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) {
+                            if (DBG) {
+                                log("Tearing down restricted metered net:" + apnContext);
+                            }
+                            // Tearing down the restricted metered data call when
+                            // conditions change. This will allow reestablishing a new unrestricted
+                            // data connection.
+                            apnContext.setReason(Phone.REASON_DATA_ENABLED);
+                            cleanUpConnection(true, apnContext);
+                        } else if (ApnSettingUtils.isMetered(apnContext.getApnSetting(), mPhone)
+                                && (netCaps != null && netCaps.hasCapability(
+                                        NetworkCapabilities.NET_CAPABILITY_NOT_METERED))) {
+                            if (DBG) {
+                                log("Tearing down unmetered net:" + apnContext);
+                            }
+                            // The APN settings is metered, but the data was still marked as
+                            // unmetered data, must be the unmetered data connection brought up when
+                            // data is off. We need to tear that down when data is enabled again.
+                            // This will allow reestablishing a new full capability data connection.
+                            apnContext.setReason(Phone.REASON_DATA_ENABLED);
+                            cleanUpConnection(true, apnContext);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1255,8 +1286,7 @@ public class DcTracker extends Handler {
      *                              provided.
      * @return True if data connection is allowed, otherwise false.
      */
-    public boolean isDataAllowed(ApnContext apnContext, @RequestNetworkType int requestType,
-                                 DataConnectionReasons dataConnectionReasons) {
+    boolean isDataAllowed(ApnContext apnContext, DataConnectionReasons dataConnectionReasons) {
         // Step 1: Get all environment conditions.
         // Step 2: Special handling for emergency APN.
         // Step 3. Build disallowed reasons.
@@ -1401,16 +1431,23 @@ public class DcTracker extends Handler {
                 reasons.add(DataAllowedReasonType.UNMETERED_APN);
             }
 
-            // If the request is restricted and there are only soft disallowed reasons (e.g. data
-            // disabled, data roaming disabled) existing, we should allow the data.
-            if (apnContext != null
-                    && apnContext.hasRestrictedRequests(true)
-                    && !reasons.allowed()) {
-                reasons.add(DataAllowedReasonType.RESTRICTED_REQUEST);
-            }
-        } else {
-            // If there is no disallowed reasons, then we should allow the data request with
-            // normal reason.
+        // If the request APN type is unmetered and there are soft disallowed reasons (e.g. data
+        // disabled, data roaming disabled) existing, we should allow the data because the user
+        // won't be charged anyway.
+        if (!isMeteredApnType && !reasons.allowed()) {
+            reasons.add(DataAllowedReasonType.UNMETERED_APN);
+        }
+
+        // If the request is restricted and there are only disallowed reasons due to data
+        // disabled, we should allow the data.
+        if (apnContext != null
+                && !apnContext.hasNoRestrictedRequests(true)
+                && reasons.contains(DataDisallowedReasonType.DATA_DISABLED)) {
+            reasons.add(DataAllowedReasonType.RESTRICTED_REQUEST);
+        }
+
+        // If at this point, we still haven't built any disallowed reasons, we should allow data.
+        if (reasons.allowed()) {
             reasons.add(DataAllowedReasonType.NORMAL);
         }
 
@@ -1534,7 +1571,9 @@ public class DcTracker extends Handler {
                 }
             }
 
-            boolean retValue = setupData(apnContext, radioTech, requestType);
+            boolean retValue = setupData(apnContext, radioTech, dataConnectionReasons.contains(
+                    DataAllowedReasonType.UNMETERED_APN));
+            notifyOffApnsOfAvailability(apnContext.getReason());
 
             if (DBG) log("trySetupData: X retValue=" + retValue);
             return retValue;
@@ -1897,16 +1936,13 @@ public class DcTracker extends Handler {
      *
      * @param apnContext APN context
      * @param radioTech RAT of the data connection
-     * @param requestType Data request type
+     * @param unmeteredUseOnly True if this data connection should be only used for unmetered
+     *                         purposes only.
      * @return True if successful, otherwise false.
      */
-    private boolean setupData(ApnContext apnContext, int radioTech,
-                              @RequestNetworkType int requestType) {
-        if (DBG) {
-            log("setupData: apnContext=" + apnContext + ", requestType="
-                    + requestTypeToString(requestType));
-        }
-        apnContext.requestLog("setupData. requestType=" + requestTypeToString(requestType));
+    private boolean setupData(ApnContext apnContext, int radioTech, boolean unmeteredUseOnly) {
+        if (DBG) log("setupData: apnContext=" + apnContext);
+        apnContext.requestLog("setupData");
         ApnSetting apnSetting;
         DataConnection dataConnection = null;
 
@@ -1994,8 +2030,7 @@ public class DcTracker extends Handler {
         Message msg = obtainMessage();
         msg.what = DctConstants.EVENT_DATA_SETUP_COMPLETE;
         msg.obj = new Pair<ApnContext, Integer>(apnContext, generation);
-        dataConnection.bringUp(apnContext, profileId, radioTech, msg, generation, requestType,
-                mPhone.getSubId());
+        dataConnection.bringUp(apnContext, profileId, radioTech, unmeteredUseOnly, msg, generation);
 
         if (DBG) log("setupData: initing!");
         return true;
@@ -2596,8 +2631,6 @@ public class DcTracker extends Handler {
     private void onDataRoamingOff() {
         if (DBG) log("onDataRoamingOff");
 
-        reevaluateDataConnections();
-
         if (!getDataRoamingEnabled()) {
             // TODO: Remove this once all old vendor RILs are gone. We don't need to set initial apn
             // attach and send the data profile again as the modem should have both roaming and
@@ -2632,13 +2665,6 @@ public class DcTracker extends Handler {
         checkDataRoamingStatus(settingChanged);
 
         if (getDataRoamingEnabled()) {
-            // If the restricted data was brought up when data roaming is disabled, and now users
-            // enable data roaming, we need to re-evaluate the conditions and possibly change the
-            // network's capability.
-            if (settingChanged) {
-                reevaluateDataConnections();
-            }
-
             if (DBG) log("onDataRoamingOnOrSettingsChanged: setup data on roaming");
 
             setupDataOnAllConnectableApns(Phone.REASON_ROAMING_ON, RetryFailures.ALWAYS);

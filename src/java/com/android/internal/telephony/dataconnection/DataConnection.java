@@ -189,6 +189,7 @@ public class DataConnection extends StateMachine {
         public ApnContext mApnContext;
         int mProfileId;
         int mRilRat;
+        final boolean mUnmeteredUseOnly;
         Message mOnCompletedMsg;
         final int mConnectionGeneration;
         @RequestNetworkType
@@ -196,11 +197,12 @@ public class DataConnection extends StateMachine {
         final int mSubId;
 
         ConnectionParams(ApnContext apnContext, int profileId, int rilRadioTechnology,
-                         Message onCompletedMsg, int connectionGeneration,
-                         @RequestNetworkType int requestType, int subId) {
+                         boolean unmeteredUseOnly,  Message onCompletedMsg,
+                         int connectionGeneration) {
             mApnContext = apnContext;
             mProfileId = profileId;
             mRilRat = rilRadioTechnology;
+            mUnmeteredUseOnly = unmeteredUseOnly;
             mOnCompletedMsg = onCompletedMsg;
             mConnectionGeneration = connectionGeneration;
             mRequestType = requestType;
@@ -212,10 +214,8 @@ public class DataConnection extends StateMachine {
             return "{mTag=" + mTag + " mApnContext=" + mApnContext
                     + " mProfileId=" + mProfileId
                     + " mRat=" + mRilRat
-                    + " mOnCompletedMsg=" + msgToString(mOnCompletedMsg)
-                    + " mRequestType=" + DcTracker.requestTypeToString(mRequestType)
-                    + " mSubId=" + mSubId
-                    + "}";
+                    + " mUnmeteredUseOnly=" + mUnmeteredUseOnly
+                    + " mOnCompletedMsg=" + msgToString(mOnCompletedMsg) + "}";
         }
     }
 
@@ -313,12 +313,8 @@ public class DataConnection extends StateMachine {
     static final int EVENT_KEEPALIVE_STOP_REQUEST = BASE + 22;
     static final int EVENT_LINK_CAPACITY_CHANGED = BASE + 23;
     static final int EVENT_RESET = BASE + 24;
-    static final int EVENT_REEVALUATE_RESTRICTED_STATE = BASE + 25;
-    static final int EVENT_REEVALUATE_DATA_CONNECTION_PROPERTIES = BASE + 26;
-    protected static final int EVENT_RETRY_CONNECTION = BASE + 27;
 
-    private static final int CMD_TO_STRING_COUNT =
-            EVENT_RETRY_CONNECTION - BASE + 1;
+    private static final int CMD_TO_STRING_COUNT = EVENT_RESET - BASE + 1;
 
     private static String[] sCmdToString = new String[CMD_TO_STRING_COUNT];
     static {
@@ -350,11 +346,6 @@ public class DataConnection extends StateMachine {
         sCmdToString[EVENT_KEEPALIVE_STOP_REQUEST - BASE] = "EVENT_KEEPALIVE_STOP_REQUEST";
         sCmdToString[EVENT_LINK_CAPACITY_CHANGED - BASE] = "EVENT_LINK_CAPACITY_CHANGED";
         sCmdToString[EVENT_RESET - BASE] = "EVENT_RESET";
-        sCmdToString[EVENT_REEVALUATE_RESTRICTED_STATE - BASE] =
-                "EVENT_REEVALUATE_RESTRICTED_STATE";
-        sCmdToString[EVENT_REEVALUATE_DATA_CONNECTION_PROPERTIES - BASE] =
-                "EVENT_REEVALUATE_DATA_CONNECTION_PROPERTIES";
-        sCmdToString[EVENT_RETRY_CONNECTION - BASE] = "EVENT_RETRY_CONNECTION";
     }
     // Convert cmd to string or null if unknown
     static String cmdToString(int cmd) {
@@ -1072,17 +1063,12 @@ public class DataConnection extends StateMachine {
     }
 
     /**
-     * Indicates if this data connection was established for unmetered use only. Note that this
-     * flag should be populated when data becomes active. And if it is set to true, it can be set to
-     * false later when we are reevaluating the data connection. But if it is set to false, it
-     * can never become true later because setting it to true will cause this data connection
-     * losing some immutable network capabilities, which can cause issues in connectivity service.
-     */
-    private boolean mUnmeteredUseOnly = false;
-
-    /**
      * Indicates if when this connection was established we had a restricted/privileged
      * NetworkRequest and needed it to overcome data-enabled limitations.
+     *
+     * This gets set once per connection setup and is based on conditions at that time.
+     * We could theoretically have dynamic capabilities but now is not a good time to
+     * experiment with that.
      *
      * This flag overrides the APN-based restriction capability, restricting the network
      * based on both having a NetworkRequest with restricted AND needing a restricted
@@ -1091,93 +1077,38 @@ public class DataConnection extends StateMachine {
      * if conditions require a restricted network to overcome user-disabled then it must
      * be restricted, otherwise it is unrestricted (or restricted based on APN type).
      *
+     * Because we're not supporting dynamic capabilities, if conditions change and we go from
+     * data-enabled to not or vice-versa we will need to tear down networks to deal with it
+     * at connection setup time with the new state.
+     *
      * This supports a privileged app bringing up a network without general apps having access
      * to it when the network is otherwise unavailable (hipri).  The first use case is
      * pre-paid SIM reprovisioning over internet, where the carrier insists on no traffic
      * other than from the privileged carrier-app.
-     *
-     * Note that the data connection cannot go from unrestricted to restricted because the
-     * connectivity service does not support dynamically closing TCP connections at this point.
      */
     private boolean mRestrictedNetworkOverride = false;
 
-    /**
-     * Check if this data connection should be restricted. We should call this when data connection
-     * becomes active, or when we want to re-evaluate the conditions to decide if we need to
-     * unstrict the data connection.
-     *
-     * @return True if this data connection needs to be restricted.
-     */
-
-    private boolean shouldRestrictNetwork() {
-        // first, check if there is any network request that containing restricted capability
-        // (i.e. Do not have NET_CAPABILITY_NOT_RESTRICTED in the request)
-        boolean isAnyRestrictedRequest = false;
+    // Should be called once when the call goes active to examine the state of things and
+    // declare the restriction override for the life of the connection
+    private void setNetworkRestriction() {
+        mRestrictedNetworkOverride = false;
+        // first, if we have no restricted requests, this override can stay FALSE:
+        boolean noRestrictedRequests = true;
         for (ApnContext apnContext : mApnContexts.keySet()) {
-            if (apnContext.hasRestrictedRequests(true /* exclude DUN */)) {
-                isAnyRestrictedRequest = true;
-                break;
-            }
+            noRestrictedRequests &= apnContext.hasNoRestrictedRequests(true /* exclude DUN */);
+        }
+        if (noRestrictedRequests) {
+            return;
         }
 
-        // If all of the network requests are non-restricted, then we don't need to restrict
-        // the network.
-        if (!isAnyRestrictedRequest) {
-            return false;
-        }
-
-        // If the network is unmetered, then we don't need to restrict the network because users
-        // won't be charged anyway.
+        // Do we need a restricted network to satisfy the request?
+        // Is this network metered?  If not, then don't add restricted
         if (!ApnSettingUtils.isMetered(mApnSetting, mPhone)) {
-            return false;
+            return;
         }
 
-        // If the data is disabled, then we need to restrict the network so only privileged apps can
-        // use the restricted network while data is disabled.
-        if (!mPhone.getDataEnabledSettings().isDataEnabled()) {
-            return true;
-        }
-
-        // If the device is roaming, and the user does not turn on data roaming, then we need to
-        // restrict the network so only privileged apps can use it.
-        if (!mDct.getDataRoamingEnabled() && mPhone.getServiceState().getDataRoaming()) {
-            return true;
-        }
-
-        // Otherwise we should not restrict the network so anyone who requests can use it.
-        return false;
-    }
-
-    /**
-     * @return True if this data connection should only be used for unmetered purposes.
-     */
-    private boolean isUnmeteredUseOnly() {
-        // If this data connection is on IWLAN, then it's unmetered and can be used by everyone.
-        // Should not be for unmetered used only.
-        if (mTransportType == AccessNetworkConstants.TRANSPORT_TYPE_WLAN) {
-            return false;
-        }
-
-        // If data is enabled, this data connection can't be for unmetered used only because
-        // everyone should be able to use it.
-        if (mPhone.getDataEnabledSettings().isDataEnabled()) {
-            return false;
-        }
-
-        // If the device is roaming and data roaming it turned on, then this data connection can't
-        // be for unmetered use only.
-        if (mDct.getDataRoamingEnabled() && mPhone.getServiceState().getDataRoaming()) {
-            return false;
-        }
-
-        // The data connection can only be unmetered used only if all attached APN contexts
-        // attached to this data connection are unmetered.
-        for (ApnContext apnContext : mApnContexts.keySet()) {
-            if (ApnSettingUtils.isMeteredApnType(apnContext.getApnTypeBitmask(), mPhone)) {
-                return false;
-            }
-        }
-        return true;
+        // Is data disabled?
+        mRestrictedNetworkOverride = !mDct.isDataEnabled();
     }
 
     /**
@@ -1191,9 +1122,9 @@ public class DataConnection extends StateMachine {
             final String[] types = ApnSetting.getApnTypesStringFromBitmask(
                 mApnSetting.getApnTypeBitmask() & ~mDisabledApnTypeBitMask).split(",");
             for (String type : types) {
-                if (!mRestrictedNetworkOverride && mUnmeteredUseOnly
-                        && ApnSettingUtils.isMeteredApnType(
-                                ApnSetting.getApnTypesBitmaskFromString(type), mPhone)) {
+                if (!mRestrictedNetworkOverride
+                        && (mConnectionParams != null && mConnectionParams.mUnmeteredUseOnly)
+                        && ApnSettingUtils.isMeteredApnType(type, mPhone)) {
                     log("Dropped the metered " + type + " for the unmetered data call.");
                     continue;
                 }
@@ -1256,7 +1187,8 @@ public class DataConnection extends StateMachine {
             // Mark NOT_METERED in the following cases,
             // 1. All APNs in APN settings are unmetered.
             // 2. The non-restricted data and is intended for unmetered use only.
-            if ((mUnmeteredUseOnly && !mRestrictedNetworkOverride)
+            if (((mConnectionParams != null && mConnectionParams.mUnmeteredUseOnly)
+                    && !mRestrictedNetworkOverride)
                     || !ApnSettingUtils.isMetered(mApnSetting, mPhone)) {
                 result.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
             } else {
@@ -1265,7 +1197,6 @@ public class DataConnection extends StateMachine {
 
             result.maybeMarkCapabilitiesRestricted();
         }
-
         if (mRestrictedNetworkOverride) {
             result.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
             // don't use dun on restriction-overriden networks.
@@ -1554,11 +1485,17 @@ public class DataConnection extends StateMachine {
                     break;
 
                 case EVENT_DISCONNECT:
-                case EVENT_DISCONNECT_ALL:
-                case EVENT_REEVALUATE_RESTRICTED_STATE:
                     if (DBG) {
-                        log("DcDefaultState deferring msg.what=" + getWhatToString(msg.what)
-                                + " RefCount=" + mApnContexts.size());
+                        log("DcDefaultState deferring msg.what=EVENT_DISCONNECT RefCount="
+                                + mApnContexts.size());
+                    }
+                    deferMessage(msg);
+                    break;
+
+                case EVENT_DISCONNECT_ALL:
+                    if (DBG) {
+                        log("DcDefaultState deferring msg.what=EVENT_DISCONNECT_ALL RefCount="
+                                + mApnContexts.size());
                     }
                     deferMessage(msg);
                     break;
@@ -1775,10 +1712,8 @@ public class DataConnection extends StateMachine {
         public boolean processMessage(Message msg) {
             switch (msg.what) {
                 case EVENT_RESET:
-                case EVENT_REEVALUATE_RESTRICTED_STATE:
                     if (DBG) {
-                        log("DcInactiveState: msg.what=" + getWhatToString(msg.what)
-                                + ", ignore we're already done");
+                        log("DcInactiveState: msg.what=EVENT_RESET, ignore we're already reset");
                     }
                     return HANDLED;
                 case EVENT_CONNECT:
@@ -2024,68 +1959,12 @@ public class DataConnection extends StateMachine {
             }
             misc.subscriberId = mPhone.getSubscriberId();
 
-            // set skip464xlat if it is not default otherwise
-            misc.skip464xlat = shouldSkip464Xlat();
-
-            mUnmeteredUseOnly = isUnmeteredUseOnly();
-
-            if (DBG) {
-                log("mRestrictedNetworkOverride = " + mRestrictedNetworkOverride
-                        + ", mUnmeteredUseOnly = " + mUnmeteredUseOnly);
-            }
-
-            if (mConnectionParams != null
-                    && mConnectionParams.mRequestType == DcTracker.REQUEST_TYPE_HANDOVER) {
-                // If this is a data setup for handover, we need to reuse the existing network agent
-                // instead of creating a new one. This should be transparent to connectivity
-                // service.
-                DcTracker dcTracker = mPhone.getDcTracker(getHandoverSourceTransport());
-                DataConnection dc = dcTracker.getDataConnectionByApnType(
-                        mConnectionParams.mApnContext.getApnType());
-                // It's possible that the source data connection has been disconnected by the modem
-                // already. If not, set its handover state to completed.
-                if (dc != null) {
-                    // Transfer network agent from the original data connection as soon as the
-                    // new handover data connection is connected.
-                    dc.setHandoverState(HANDOVER_STATE_COMPLETED);
-                }
-
-                if (mHandoverSourceNetworkAgent != null) {
-                    String logStr = "Transfer network agent successfully.";
-                    log(logStr);
-                    mHandoverLocalLog.log(logStr);
-                    mNetworkAgent = mHandoverSourceNetworkAgent;
-                    mNetworkAgent.acquireOwnership(DataConnection.this, mTransportType);
-
-                    // TODO: Should evaluate mDisabledApnTypeBitMask again after handover. We don't
-                    // do it now because connectivity service does not support dynamically removing
-                    // immutable capabilities.
-
-                    // Update the capability after handover
-                    mNetworkAgent.sendNetworkCapabilities(getNetworkCapabilities(),
-                            DataConnection.this);
-                    mNetworkAgent.sendLinkProperties(mLinkProperties, DataConnection.this);
-                    mHandoverSourceNetworkAgent = null;
-                } else {
-                    String logStr = "Failed to get network agent from original data connection";
-                    loge(logStr);
-                    mHandoverLocalLog.log(logStr);
-                    return;
-                }
-            } else {
-                mScore = calculateScore();
-                final NetworkFactory factory = PhoneFactory.getNetworkFactory(
-                        mPhone.getPhoneId());
-                final int factorySerialNumber = (null == factory)
-                        ? NetworkFactory.SerialNumber.NONE : factory.getSerialNumber();
-
-                mDisabledApnTypeBitMask |= getDisallowedApnTypes();
-
-                mNetworkAgent = DcNetworkAgent.createDcNetworkAgent(DataConnection.this,
-                        mPhone, mNetworkInfo, mScore, misc, factorySerialNumber, mTransportType);
-            }
-
-            if (mTransportType == AccessNetworkConstants.TRANSPORT_TYPE_WWAN) {
+            setNetworkRestriction();
+            if (DBG) log("mRestrictedNetworkOverride = " + mRestrictedNetworkOverride);
+            mNetworkAgent = new DcNetworkAgent(getHandler().getLooper(), mPhone.getContext(),
+                    "DcNetworkAgent", mNetworkInfo, getNetworkCapabilities(), mLinkProperties,
+                    50, misc);
+            if (mDataServiceManager.getTransportType() == TransportType.WWAN) {
                 mPhone.mCi.registerForNattKeepaliveStatus(
                         getHandler(), DataConnection.EVENT_KEEPALIVE_STATUS, null);
                 mPhone.mCi.registerForLceInfo(
@@ -2370,45 +2249,6 @@ public class DataConnection extends StateMachine {
                     retVal = HANDLED;
                     break;
                 }
-                case EVENT_REEVALUATE_RESTRICTED_STATE: {
-                    // If the network was restricted, and now it does not need to be restricted
-                    // anymore, we should add the NET_CAPABILITY_NOT_RESTRICTED capability.
-                    if (mRestrictedNetworkOverride && !shouldRestrictNetwork()) {
-                        if (DBG) {
-                            log("Data connection becomes not-restricted. dc=" + this);
-                        }
-                        // Note we only do this when network becomes non-restricted. When a
-                        // non-restricted becomes restricted (e.g. users disable data, or turn off
-                        // data roaming), DCT will explicitly tear down the networks (because
-                        // connectivity service does not support force-close TCP connections today).
-                        // Also note that NET_CAPABILITY_NOT_RESTRICTED is an immutable capability
-                        // (see {@link NetworkCapabilities}) once we add it to the network, we can't
-                        // remove it through the entire life cycle of the connection.
-                        mRestrictedNetworkOverride = false;
-                        mNetworkAgent.sendNetworkCapabilities(getNetworkCapabilities(),
-                                DataConnection.this);
-                    }
-
-                    // If the data does need to be unmetered use only (e.g. users turn on data, or
-                    // device is not roaming anymore assuming data roaming is off), then we can
-                    // dynamically add those metered APN type capabilities back. (But not the
-                    // other way around because most of the APN-type capabilities are immutable
-                    // capabilities.)
-                    if (mUnmeteredUseOnly && !isUnmeteredUseOnly()) {
-                        mUnmeteredUseOnly = false;
-                        mNetworkAgent.sendNetworkCapabilities(getNetworkCapabilities(),
-                                DataConnection.this);
-                    }
-
-                    retVal = HANDLED;
-                    break;
-                }
-                case EVENT_REEVALUATE_DATA_CONNECTION_PROPERTIES: {
-                    // Update other properties like link properties if needed in future.
-                    updateScore();
-                    retVal = HANDLED;
-                    break;
-                }
                 default:
                     if (VDBG) {
                         log("DcActiveState not handled msg.what=" + getWhatToString(msg.what));
@@ -2541,6 +2381,7 @@ public class DataConnection extends StateMachine {
      * @param apnContext is the Access Point Name to bring up a connection to
      * @param profileId for the connection
      * @param rilRadioTechnology Radio technology for the data connection
+     * @param unmeteredUseOnly Indicates the data connection can only used for unmetered purposes
      * @param onCompletedMsg is sent with its msg.obj as an AsyncResult object.
      *                       With AsyncResult.userObj set to the original msg.obj,
      *                       AsyncResult.result = FailCause and AsyncResult.exception = Exception().
@@ -2550,14 +2391,15 @@ public class DataConnection extends StateMachine {
      * @param subId the subscription id associated with this data connection.
      */
     public void bringUp(ApnContext apnContext, int profileId, int rilRadioTechnology,
-                        Message onCompletedMsg, int connectionGeneration,
-                        @RequestNetworkType int requestType, int subId) {
+                        boolean unmeteredUseOnly, Message onCompletedMsg,
+                        int connectionGeneration) {
         if (DBG) {
-            log("bringUp: apnContext=" + apnContext + " onCompletedMsg=" + onCompletedMsg);
+            log("bringUp: apnContext=" + apnContext + "unmeteredUseOnly=" + unmeteredUseOnly
+                    + " onCompletedMsg=" + onCompletedMsg);
         }
         sendMessage(DataConnection.EVENT_CONNECT,
-                new ConnectionParams(apnContext, profileId, rilRadioTechnology, onCompletedMsg,
-                        connectionGeneration, requestType, subId));
+                new ConnectionParams(apnContext, profileId, rilRadioTechnology, unmeteredUseOnly,
+                        onCompletedMsg, connectionGeneration));
     }
 
     /**
@@ -2609,24 +2451,6 @@ public class DataConnection extends StateMachine {
     public void reset() {
         sendMessage(EVENT_RESET);
         if (DBG) log("reset");
-    }
-
-    /**
-     * Re-evaluate the restricted state. If the restricted data connection does not need to be
-     * restricted anymore, we need to dynamically change the network's capability.
-     */
-    void reevaluateRestrictedState() {
-        sendMessage(EVENT_REEVALUATE_RESTRICTED_STATE);
-        if (DBG) log("reevaluate restricted state");
-    }
-
-    /**
-     * Re-evaluate the data connection properties. For example, it will recalculate data connection
-     * score and update through network agent it if changed.
-     */
-    void reevaluateDataConnectionProperties() {
-        sendMessage(EVENT_REEVALUATE_DATA_CONNECTION_PROPERTIES);
-        if (DBG) log("reevaluate data connection properties");
     }
 
     /**
@@ -2955,10 +2779,6 @@ public class DataConnection extends StateMachine {
         pw.println("mLastFailCause=" + mLastFailCause);
         pw.println("mUserData=" + mUserData);
         pw.println("mSubscriptionOverride=" + Integer.toHexString(mSubscriptionOverride));
-        pw.println("mRestrictedNetworkOverride=" + mRestrictedNetworkOverride);
-        pw.println("mUnmeteredUseOnly=" + mUnmeteredUseOnly);
-        pw.println("disallowedApnTypes="
-                + ApnSetting.getApnTypesStringFromBitmask(getDisallowedApnTypes()));
         pw.println("mInstanceNumber=" + mInstanceNumber);
         pw.println("mAc=" + mAc);
         pw.println("mScore=" + mScore);

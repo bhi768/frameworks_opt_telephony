@@ -1041,7 +1041,7 @@ public class DcTrackerTest extends TelephonyTest {
         doReturn(true).when(mApnContext).isEnabled();
         doReturn(true).when(mApnContext).isDependencyMet();
         doReturn(true).when(mApnContext).isReady();
-        doReturn(false).when(mApnContext).hasRestrictedRequests(eq(true));
+        doReturn(true).when(mApnContext).hasNoRestrictedRequests(eq(true));
     }
 
     // Test the emergency APN setup.
@@ -1145,7 +1145,7 @@ public class DcTrackerTest extends TelephonyTest {
     @SmallTest
     public void testTrySetupRestrictedDataDisabled() throws Exception {
         initApns(PhoneConstants.APN_TYPE_DEFAULT, new String[]{PhoneConstants.APN_TYPE_ALL});
-        doReturn(true).when(mApnContext).hasRestrictedRequests(eq(true));
+        doReturn(false).when(mApnContext).hasNoRestrictedRequests(eq(true));
 
         //mDct.setUserDataEnabled(false);
         doReturn(false).when(mDataEnabledSettings).isDataEnabled();
@@ -1175,7 +1175,7 @@ public class DcTrackerTest extends TelephonyTest {
     @SmallTest
     public void testTrySetupRestrictedRoamingDisabled() throws Exception {
         initApns(PhoneConstants.APN_TYPE_DEFAULT, new String[]{PhoneConstants.APN_TYPE_ALL});
-        doReturn(true).when(mApnContext).hasRestrictedRequests(eq(true));
+        doReturn(false).when(mApnContext).hasNoRestrictedRequests(eq(true));
 
         mDct.setDataRoamingEnabledByUser(false);
         mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
@@ -1194,7 +1194,8 @@ public class DcTrackerTest extends TelephonyTest {
         mDct.sendMessage(mDct.obtainMessage(DctConstants.EVENT_TRY_SETUP_DATA, mApnContext));
         waitForMs(200);
 
-        verify(mSimulatedCommandsVerifier, times(1)).setupDataCall(anyInt(), any(DataProfile.class),
+        // expect no restricted data connection
+        verify(mSimulatedCommandsVerifier, times(0)).setupDataCall(anyInt(), any(DataProfile.class),
                 eq(false), eq(false), eq(DataService.REQUEST_REASON_NORMAL), any(),
                 any(Message.class));
     }
