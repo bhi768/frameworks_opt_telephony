@@ -1004,7 +1004,8 @@ public class PhoneSwitcher extends Handler {
         return phoneId;
     }
 
-    protected int getSubIdFromNetworkSpecifier(NetworkSpecifier specifier) {
+    protected int getSubIdFromNetworkRequest(NetworkRequest networkRequest) {
+        NetworkSpecifier specifier = networkRequest.networkCapabilities.getNetworkSpecifier();
         if (specifier == null) {
             return DEFAULT_SUBSCRIPTION_ID;
         }
