@@ -109,7 +109,6 @@ public class MultiSimSettingController extends Handler {
 
     protected final Context mContext;
     protected final SubscriptionController mSubController;
-    protected boolean mIsAllSubscriptionsLoaded;
     // Keep a record of active primary (non-opportunistic) subscription list.
     @NonNull protected List<Integer> mPrimarySubList = new ArrayList<>();
 
@@ -649,7 +648,7 @@ public class MultiSimSettingController extends Handler {
     }
 
     protected void disableDataForNonDefaultNonOpportunisticSubscriptions() {
-        if (!isReadyToReevaluate()) return;
+        if (!mSubInfoInitialized) return;
 
         int defaultDataSub = mSubController.getDefaultDataSubId();
 
@@ -751,38 +750,6 @@ public class MultiSimSettingController extends Handler {
         }
 
         return SubscriptionManager.isValidSubscriptionId(newValue);
-    }
-
-    // When a primary and its grouped opportunistic subscriptions were active, and the primary
-    // subscription gets deactivated or removed, we need to automatically disable the grouped
-    // opportunistic subscription, which will be marked isGroupDisabled as true by SubController.
-    private void deactivateGroupedOpportunisticSubscriptionIfNeeded() {
-        if (!SubscriptionInfoUpdater.isSubInfoInitialized()) return;
-
-        List<SubscriptionInfo> opptSubList = mSubController.getOpportunisticSubscriptions(
-                mContext.getOpPackageName());
-
-        if (ArrayUtils.isEmpty(opptSubList)) return;
-
-        for (SubscriptionInfo info : opptSubList) {
-            if (info.isGroupDisabled() && mSubController.isActiveSubId(info.getSubscriptionId())) {
-                log("[deactivateGroupedOpptSubIfNeeded] "
-                        + "Deactivating grouped opportunistic subscription "
-                        + info.getSubscriptionId());
-                deactivateSubscription(info);
-            }
-        }
-    }
-
-    private void deactivateSubscription(SubscriptionInfo info) {
-        // TODO: b/133379187 have a way to deactivate pSIM.
-        if (info.isEmbedded()) {
-            log("[deactivateSubscription] eSIM profile " + info.getSubscriptionId());
-            EuiccManager euiccManager = (EuiccManager)
-                    mContext.getSystemService(Context.EUICC_SERVICE);
-            euiccManager.switchToSubscription(SubscriptionManager.INVALID_SUBSCRIPTION_ID,
-                    PendingIntent.getService(mContext, 0, new Intent(), 0));
-        }
     }
 
     protected void log(String msg) {
