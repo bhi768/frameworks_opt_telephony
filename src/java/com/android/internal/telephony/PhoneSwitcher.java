@@ -1285,6 +1285,10 @@ public class PhoneSwitcher extends Handler {
         return false;
     }
 
+    protected boolean isCallActive(int phoneId) {
+        return false;
+    }
+
     private void updateHalCommandToUse() {
         mHalCommandToUse = mRadioConfig.isSetPreferredDataCommandSupported()
                 ? HAL_COMMAND_PREFERRED_DATA : HAL_COMMAND_ALLOW_DATA;
