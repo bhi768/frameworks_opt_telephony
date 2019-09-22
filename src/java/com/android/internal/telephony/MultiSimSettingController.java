@@ -447,7 +447,7 @@ public class MultiSimSettingController extends Handler {
      * 4) If non above is met, clear the default value to INVALID.
      *
      */
-    protected void updateDefaults() {
+    protected void updateDefaults(boolean init) {
         if (DBG) log("updateDefaults");
 
         if (!isReadyToReevaluate()) return;
