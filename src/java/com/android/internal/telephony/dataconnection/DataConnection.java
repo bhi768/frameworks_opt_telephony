@@ -2819,3 +2819,29 @@ public class DataConnection extends StateMachine {
         return true;
     }
 }
+
+    protected void handlePdpRejectCauseSuccess() {
+        if (DBG) log("DataConnection: handlePdpRejectCauseSuccess()");
+    }
+
+    protected boolean isPdpRejectCauseFailureHandled(SetupResult result,
+            ConnectionParams cp) {
+        if (DBG) log("DataConnection: isPdpRejectCauseFailureHandled()");
+        return false;
+    }
+
+    protected boolean isPdpRejectCause(int cause) {
+        return (cause == DataFailCause.USER_AUTHENTICATION
+                || cause == DataFailCause.SERVICE_OPTION_NOT_SUBSCRIBED
+                || cause == DataFailCause.MULTI_CONN_TO_SAME_PDN_NOT_ALLOWED);
+    }
+
+    protected boolean isPdpRejectConfigEnabled() {
+        return mPhone.getContext().getResources().getBoolean(
+                com.android.internal.R.bool.config_pdp_retry_for_29_33_55_enabled);
+    }
+
+    protected boolean isDataCallConnectAllowed() {
+        return true;
+    }
+}
