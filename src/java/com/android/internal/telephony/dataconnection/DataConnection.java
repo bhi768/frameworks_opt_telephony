@@ -1718,10 +1718,6 @@ public class DataConnection extends StateMachine {
                     return HANDLED;
                 case EVENT_CONNECT:
                     if (DBG) log("DcInactiveState: mag.what=EVENT_CONNECT");
-                    if (isPdpRejectConfigEnabled() && !isDataCallConnectAllowed()) {
-                        if (DBG) log("DcInactiveState: skip EVENT_CONNECT");
-                        return HANDLED;
-                    }
 
                     ConnectionParams cp = (ConnectionParams) msg.obj;
 
@@ -1754,25 +1750,6 @@ public class DataConnection extends StateMachine {
                 case EVENT_DISCONNECT_ALL:
                     if (DBG) log("DcInactiveState: msg.what=EVENT_DISCONNECT_ALL");
                     notifyDisconnectCompleted((DisconnectParams)msg.obj, false);
-                    return HANDLED;
-                case EVENT_RETRY_CONNECTION:
-                    if (DBG) {
-                        log("DcInactiveState: msg.what=EVENT_RETRY_CONNECTION"
-                                + " mConnectionParams=" + mConnectionParams);
-                    }
-                    if (mConnectionParams != null) {
-                        if (initConnection(mConnectionParams)) {
-                            //In case of apn modify, get the latest apn to retry
-                            mApnSetting = mConnectionParams.mApnContext.getApnSetting();
-                            connect(mConnectionParams);
-                            transitionTo(mActivatingState);
-                        } else {
-                            if (DBG) {
-                                log("DcInactiveState: msg.what=EVENT_RETRY_CONNECTION"
-                                    + " initConnection failed");
-                            }
-                        }
-                    }
                     return HANDLED;
                 default:
                     if (VDBG) {
@@ -2792,31 +2769,6 @@ public class DataConnection extends StateMachine {
         pw.decreaseIndent();
         pw.println();
         pw.flush();
-    }
-
-    protected void handlePdpRejectCauseSuccess() {
-        if (DBG) log("DataConnection: handlePdpRejectCauseSuccess()");
-    }
-
-    protected boolean isPdpRejectCauseFailureHandled(SetupResult result,
-            ConnectionParams cp) {
-        if (DBG) log("DataConnection: isPdpRejectCauseFailureHandled()");
-        return false;
-    }
-
-    protected boolean isPdpRejectCause(int cause) {
-        return (cause == DataFailCause.USER_AUTHENTICATION
-                || cause == DataFailCause.SERVICE_OPTION_NOT_SUBSCRIBED
-                || cause == DataFailCause.MULTI_CONN_TO_SAME_PDN_NOT_ALLOWED);
-    }
-
-    protected boolean isPdpRejectConfigEnabled() {
-        return mPhone.getContext().getResources().getBoolean(
-                com.android.internal.R.bool.config_pdp_retry_for_29_33_55_enabled);
-    }
-
-    protected boolean isDataCallConnectAllowed() {
-        return true;
     }
 }
 
