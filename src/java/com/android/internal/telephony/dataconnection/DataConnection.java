@@ -1936,12 +1936,68 @@ public class DataConnection extends StateMachine {
             }
             misc.subscriberId = mPhone.getSubscriberId();
 
-            setNetworkRestriction();
-            if (DBG) log("mRestrictedNetworkOverride = " + mRestrictedNetworkOverride);
-            mNetworkAgent = new DcNetworkAgent(getHandler().getLooper(), mPhone.getContext(),
-                    "DcNetworkAgent", mNetworkInfo, getNetworkCapabilities(), mLinkProperties,
-                    50, misc);
-            if (mDataServiceManager.getTransportType() == TransportType.WWAN) {
+            // set skip464xlat if it is not default otherwise
+            misc.skip464xlat = shouldSkip464Xlat();
+
+            mUnmeteredUseOnly = isUnmeteredUseOnly();
+
+            if (DBG) {
+                log("mRestrictedNetworkOverride = " + mRestrictedNetworkOverride
+                        + ", mUnmeteredUseOnly = " + mUnmeteredUseOnly);
+            }
+
+            if (mConnectionParams != null
+                    && mConnectionParams.mRequestType == DcTracker.REQUEST_TYPE_HANDOVER) {
+                // If this is a data setup for handover, we need to reuse the existing network agent
+                // instead of creating a new one. This should be transparent to connectivity
+                // service.
+                DcTracker dcTracker = mPhone.getDcTracker(getHandoverSourceTransport());
+                DataConnection dc = dcTracker.getDataConnectionByApnType(
+                        mConnectionParams.mApnContext.getApnType());
+                // It's possible that the source data connection has been disconnected by the modem
+                // already. If not, set its handover state to completed.
+                if (dc != null) {
+                    // Transfer network agent from the original data connection as soon as the
+                    // new handover data connection is connected.
+                    dc.setHandoverState(HANDOVER_STATE_COMPLETED);
+                }
+
+                if (mHandoverSourceNetworkAgent != null) {
+                    String logStr = "Transfer network agent successfully.";
+                    log(logStr);
+                    mHandoverLocalLog.log(logStr);
+                    mNetworkAgent = mHandoverSourceNetworkAgent;
+                    mNetworkAgent.acquireOwnership(DataConnection.this, mTransportType);
+
+                    // TODO: Should evaluate mDisabledApnTypeBitMask again after handover. We don't
+                    // do it now because connectivity service does not support dynamically removing
+                    // immutable capabilities.
+
+                    // Update the capability after handover
+                    mNetworkAgent.sendNetworkCapabilities(getNetworkCapabilities(),
+                            DataConnection.this);
+                    mNetworkAgent.sendLinkProperties(mLinkProperties, DataConnection.this);
+                    mHandoverSourceNetworkAgent = null;
+                } else {
+                    String logStr = "Failed to get network agent from original data connection";
+                    loge(logStr);
+                    mHandoverLocalLog.log(logStr);
+                    return;
+                }
+            } else {
+                mScore = calculateScore();
+                final NetworkFactory factory = PhoneFactory.getNetworkFactory(
+                        mPhone.getPhoneId());
+                final int factorySerialNumber = (null == factory)
+                        ? NetworkFactory.SerialNumber.NONE : factory.getSerialNumber();
+
+                mDisabledApnTypeBitMask |= getDisallowedApnTypes();
+
+                mNetworkAgent = DcNetworkAgent.createDcNetworkAgent(DataConnection.this,
+                        mPhone, mNetworkInfo, mScore, misc, factorySerialNumber, mTransportType);
+            }
+
+            if (mTransportType == AccessNetworkConstants.TRANSPORT_TYPE_WWAN) {
                 mPhone.mCi.registerForNattKeepaliveStatus(
                         getHandler(), DataConnection.EVENT_KEEPALIVE_STATUS, null);
                 mPhone.mCi.registerForLceInfo(

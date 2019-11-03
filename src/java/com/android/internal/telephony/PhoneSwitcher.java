@@ -622,19 +622,6 @@ public class PhoneSwitcher extends Handler {
         }
     }
 
-    protected boolean isEmergency() {
-        if (isInEmergencyCallbackMode()) return true;
-        for (Phone p : mPhones) {
-            if (p == null) continue;
-            if (p.isInEmergencyCall()) return true;
-            Phone imsPhone = p.getImsPhone();
-            if (imsPhone != null && imsPhone.isInEmergencyCall()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private boolean isInEmergencyCallbackMode() {
         for (Phone p : mPhones) {
             if (p == null) continue;
@@ -971,8 +958,9 @@ public class PhoneSwitcher extends Handler {
         }
     }
 
-    protected int phoneIdForRequest(NetworkRequest netRequest) {
-        int subId = getSubIdFromNetworkRequest(netRequest);
+    private int phoneIdForRequest(NetworkRequest netRequest) {
+        int subId = getSubIdFromNetworkSpecifier(netRequest.networkCapabilities
+                .getNetworkSpecifier());
 
         if (subId == DEFAULT_SUBSCRIPTION_ID) return mPreferredDataPhoneId;
         if (subId == INVALID_SUBSCRIPTION_ID) return INVALID_PHONE_INDEX;
@@ -1004,8 +992,7 @@ public class PhoneSwitcher extends Handler {
         return phoneId;
     }
 
-    protected int getSubIdFromNetworkRequest(NetworkRequest networkRequest) {
-        NetworkSpecifier specifier = networkRequest.networkCapabilities.getNetworkSpecifier();
+    private int getSubIdFromNetworkSpecifier(NetworkSpecifier specifier) {
         if (specifier == null) {
             return DEFAULT_SUBSCRIPTION_ID;
         }
@@ -1270,7 +1257,7 @@ public class PhoneSwitcher extends Handler {
                 subId, needValidation ? 1 : 0, callback).sendToTarget();
     }
 
-    protected boolean isCallActive(Phone phone) {
+    private boolean isPhoneInVoiceCall(Phone phone) {
         if (phone == null) {
             return false;
         }

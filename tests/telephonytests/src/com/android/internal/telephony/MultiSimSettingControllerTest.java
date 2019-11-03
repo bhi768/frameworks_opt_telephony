@@ -584,4 +584,46 @@ public class MultiSimSettingControllerTest extends TelephonyTest {
         assertEquals(EXTRA_DEFAULT_SUBSCRIPTION_SELECT_TYPE_DATA,
                 intent.getIntExtra(EXTRA_DEFAULT_SUBSCRIPTION_SELECT_TYPE, -1));
     }
+
+    @Test
+    @SmallTest
+    public void testCarrierConfigLoading() throws Exception {
+        doReturn(true).when(mPhoneMock1).isUserDataEnabled();
+        doReturn(true).when(mPhoneMock2).isUserDataEnabled();
+        // Sub 2 should have mobile data off, but it shouldn't happen until carrier configs are
+        // loaded on both subscriptions.
+        mMultiSimSettingControllerUT.notifyAllSubscriptionLoaded();
+        waitABit();
+        verify(mDataEnabledSettingsMock2, never()).setUserDataEnabled(false);
+        mMultiSimSettingControllerUT.notifyCarrierConfigChanged(0, 1);
+        waitABit();
+        verify(mDataEnabledSettingsMock2, never()).setUserDataEnabled(false);
+        mMultiSimSettingControllerUT.notifyCarrierConfigChanged(1, 2);
+        waitABit();
+        verify(mDataEnabledSettingsMock2).setUserDataEnabled(false);
+
+        // Switch from sub 2 to sub 3 in phone[1].
+        clearInvocations(mSubControllerMock);
+        doReturn(false).when(mSubControllerMock).isActiveSubId(2);
+        doReturn(true).when(mSubControllerMock).isActiveSubId(3);
+        doReturn(SubscriptionManager.INVALID_PHONE_INDEX).when(mSubControllerMock).getPhoneId(2);
+        doReturn(1).when(mSubControllerMock).getPhoneId(3);
+        doReturn(3).when(mPhoneMock2).getSubId();
+        List<SubscriptionInfo> infoList = Arrays.asList(mSubInfo1, mSubInfo3);
+        doReturn(infoList).when(mSubControllerMock).getActiveSubscriptionInfoList(anyString());
+        doReturn(new int[]{1, 3}).when(mSubControllerMock).getActiveSubIdList(anyBoolean());
+
+        // Nothing should happen until carrier config change is notified on sub 3.
+        mMultiSimSettingControllerUT.notifySubscriptionInfoChanged();
+        waitABit();
+        verify(mContext, never()).sendBroadcast(any());
+
+        mMultiSimSettingControllerUT.notifyCarrierConfigChanged(1, 3);
+        waitABit();
+        // Intent should be broadcast to ask default data selection.
+        Intent intent = captureBroadcastIntent();
+        assertEquals(ACTION_PRIMARY_SUBSCRIPTION_LIST_CHANGED, intent.getAction());
+        assertEquals(EXTRA_DEFAULT_SUBSCRIPTION_SELECT_TYPE_DATA,
+                intent.getIntExtra(EXTRA_DEFAULT_SUBSCRIPTION_SELECT_TYPE, -1));
+    }
 }
