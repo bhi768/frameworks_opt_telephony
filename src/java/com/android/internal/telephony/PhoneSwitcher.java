@@ -329,19 +329,13 @@ public class PhoneSwitcher extends Handler {
         // subscription.
         mPhoneIdInVoiceCall = SubscriptionManager.INVALID_PHONE_INDEX;
         for (Phone phone : mPhones) {
-            if (isPhoneInVoiceCall(phone) || isPhoneInVoiceCall(phone.getImsPhone())) {
+            if (isCallActive(phone) || isCallActive(phone.getImsPhone())) {
                 mPhoneIdInVoiceCall = phone.getPhoneId();
                 break;
             }
         }
 
-        if (mPhoneIdInVoiceCall != oldPhoneIdInVoiceCall) {
-            log("isPhoneInVoiceCallChanged from phoneId " + oldPhoneIdInVoiceCall
-                    + " to phoneId " + mPhoneIdInVoiceCall);
-            return true;
-        } else {
-            return false;
-        }
+        return (mPhoneIdInVoiceCall != oldPhoneIdInVoiceCall);
     }
 
     @VisibleForTesting
@@ -1289,10 +1283,6 @@ public class PhoneSwitcher extends Handler {
         return (phone.getForegroundCall().getState() == Call.State.ACTIVE
                 || phone.getForegroundCall().getState() == Call.State.ALERTING
                 || phone.getBackgroundCall().getState() == Call.State.HOLDING);
-    }
-
-    protected boolean isCallActive(int phoneId) {
-        return false;
     }
 
     protected boolean isCallActive(int phoneId) {
