@@ -472,31 +472,26 @@ public class TelephonyComponentFactory {
     public Phone makePhone(Context context, CommandsInterface ci, PhoneNotifier notifier,
             int phoneId, int precisePhoneType,
             TelephonyComponentFactory telephonyComponentFactory) {
-        Rlog.d(LOG_TAG, "makePhone");
+        Rlog.i(TAG, "makePhone");
         return new GsmCdmaPhone(context, ci, notifier, phoneId, precisePhoneType,
                 telephonyComponentFactory);
     }
 
     public SubscriptionController initSubscriptionController(Context c, CommandsInterface[] ci) {
-        Rlog.d(LOG_TAG, "initSubscriptionController");
+        Rlog.i(TAG, "initSubscriptionController");
         return SubscriptionController.init(c, ci);
     }
 
     public SubscriptionInfoUpdater makeSubscriptionInfoUpdater(Looper looper, Context context,
             Phone[] phones, CommandsInterface[] ci) {
-        Rlog.d(LOG_TAG, "makeSubscriptionInfoUpdater");
+        Rlog.i(TAG, "makeSubscriptionInfoUpdater");
         return new SubscriptionInfoUpdater(looper, context, phones, ci);
-    }
-
-    public void makeExtTelephonyClasses(Context context,
-            Phone[] phones, CommandsInterface[] commandsInterfaces) {
-        Rlog.d(LOG_TAG, "makeExtTelephonyClasses");
     }
 
     public PhoneSwitcher makePhoneSwitcher(int maxActivePhones, int numPhones, Context context,
             SubscriptionController subscriptionController, Looper looper, ITelephonyRegistry tr,
             CommandsInterface[] cis, Phone[] phones) {
-        Rlog.d(LOG_TAG, "makePhoneSwitcher");
+        Rlog.i(TAG, "makePhoneSwitcher");
         return new PhoneSwitcher(maxActivePhones,numPhones,
                 context, subscriptionController, looper, tr, cis,
                 phones);
@@ -506,5 +501,16 @@ public class TelephonyComponentFactory {
             int cdmaSubscription, Integer instanceId) {
         Rlog.d(LOG_TAG, "makeRIL");
         return new RIL(context, preferredNetworkType, cdmaSubscription, instanceId);
+    }
+
+    public MultiSimSettingController initMultiSimSettingController(Context c,
+            SubscriptionController sc) {
+        Rlog.i(TAG, " initMultiSimSettingController ");
+        return MultiSimSettingController.init(c, sc);
+    }
+
+    public void makeExtTelephonyClasses(Context context,
+            Phone[] phones, CommandsInterface[] commandsInterfaces) {
+        Rlog.d(LOG_TAG, "makeExtTelephonyClasses");
     }
 }

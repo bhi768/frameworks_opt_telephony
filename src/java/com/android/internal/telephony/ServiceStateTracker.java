@@ -2406,11 +2406,6 @@ public class ServiceStateTracker extends Handler {
                 roaming = mGsmRoaming;
             }
 
-            // for IWLAN case, data is home. Only check voice roaming.
-            if (mNewSS.getRilDataRadioTechnology() == ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN) {
-                roaming = mGsmRoaming;
-            }
-
             if (mGsmRoaming && !isOperatorConsideredRoaming(mNewSS)
                     && (isSameNamedOperators(mNewSS) || isOperatorConsideredNonRoaming(mNewSS))) {
                 log("updateRoamingState: resource override set non roaming.isSameNamedOperators="

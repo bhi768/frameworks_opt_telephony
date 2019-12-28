@@ -2812,6 +2812,10 @@ public class DataConnection extends StateMachine {
         pw.println("mLastFailCause=" + mLastFailCause);
         pw.println("mUserData=" + mUserData);
         pw.println("mSubscriptionOverride=" + Integer.toHexString(mSubscriptionOverride));
+        pw.println("mRestrictedNetworkOverride=" + mRestrictedNetworkOverride);
+        pw.println("mUnmeteredUseOnly=" + mUnmeteredUseOnly);
+        pw.println("disallowedApnTypes="
+                + ApnSetting.getApnTypesStringFromBitmask(getDisallowedApnTypes()));
         pw.println("mInstanceNumber=" + mInstanceNumber);
         pw.println("mAc=" + mAc);
         pw.println("mScore=" + mScore);
