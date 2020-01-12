@@ -622,20 +622,7 @@ public class PhoneSwitcher extends Handler {
         }
     }
 
-    protected boolean isEmergency() {
-        if (isInEmergencyCallbackMode()) return true;
-        for (Phone p : mPhones) {
-            if (p == null) continue;
-            if (p.isInEmergencyCall()) return true;
-            Phone imsPhone = p.getImsPhone();
-            if (imsPhone != null && imsPhone.isInEmergencyCall()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    protected boolean isInEmergencyCallbackMode() {
+    private boolean isInEmergencyCallbackMode() {
         for (Phone p : mPhones) {
             if (p == null) continue;
             if (p.isInEcm()) return true;
@@ -1000,12 +987,7 @@ public class PhoneSwitcher extends Handler {
         return phoneId;
     }
 
-    protected int getSubIdFromNetworkRequest(NetworkRequest networkRequest) {
-        NetworkSpecifier specifier = networkRequest.networkCapabilities.getNetworkSpecifier();
-        return getSubIdFromNetworkSpecifier(specifier);
-    }
-
-    protected int getSubIdFromNetworkSpecifier(NetworkSpecifier specifier) {
+    private int getSubIdFromNetworkSpecifier(NetworkSpecifier specifier) {
         if (specifier == null) {
             return DEFAULT_SUBSCRIPTION_ID;
         }
@@ -1279,10 +1261,6 @@ public class PhoneSwitcher extends Handler {
         return (phone.getForegroundCall().getState() == Call.State.ACTIVE
                 || phone.getForegroundCall().getState() == Call.State.ALERTING
                 || phone.getBackgroundCall().getState() == Call.State.HOLDING);
-    }
-
-    protected boolean isCallActive(int phoneId) {
-        return false;
     }
 
     private void updateHalCommandToUse() {
