@@ -3482,22 +3482,13 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 mForegroundCall.detach(oldConnection);
                 removeConnection(oldConnection);
                 try {
-                    mLastDialArgs.intentExtras.putBoolean(
-                            android.telecom.TelecomManager.EXTRA_START_CALL_WITH_RTT, false);
-                    mLastDialArgs = ImsPhone.ImsDialArgs.Builder.from(mLastDialArgs)
-                                            .setRttTextStream(null).build();
+                    mPendingMO = null;
+                    ImsDialArgs newDialArgs = ImsDialArgs.Builder.from(mLastDialArgs)
+                            .setRttTextStream(null)
+                            .build();
                     Connection newConnection =
-                            mPhone.getDefaultPhone().dial(mLastDialString, mLastDialArgs);
+                            mPhone.getDefaultPhone().dial(mLastDialString, newDialArgs);
                     oldConnection.onOriginalConnectionReplaced(newConnection);
-
-                    final ImsCall imsCall = mForegroundCall.getImsCall();
-                    final ImsCallProfile callProfile = imsCall.getCallProfile();
-                    /* update EXTRA_RETRY_ON_IMS_WITHOUT_RTT for clients to infer
-                       from this extra that the call is re-dialed without RTT */
-                    callProfile.setCallExtraBoolean(
-                            QtiImsUtils.EXTRA_RETRY_ON_IMS_WITHOUT_RTT, true);
-                    ImsPhoneConnection conn = findConnection(imsCall);
-                    conn.updateExtras(imsCall);
                 } catch (CallStateException e) {
                     sendCallStartFailedDisconnect(callInfo.first, callInfo.second);
                 }
